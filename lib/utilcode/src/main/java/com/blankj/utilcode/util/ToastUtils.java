@@ -15,6 +15,7 @@ import android.os.Message;
 import android.support.annotation.ColorInt;
 import android.support.annotation.DrawableRes;
 import android.support.annotation.LayoutRes;
+import android.support.annotation.NonNull;
 import android.support.annotation.StringRes;
 import android.support.v4.app.NotificationManagerCompat;
 import android.util.Log;
@@ -232,7 +233,7 @@ public final class ToastUtils {
     private static void show(final int resId, final int duration, final Object... args) {
         try {
             CharSequence text = Utils.getApp().getResources().getText(resId);
-            if (args != null) {
+            if (args != null && args.length > 0) {
                 text = String.format(text.toString(), args);
             }
             show(text, duration);
@@ -246,7 +247,7 @@ public final class ToastUtils {
         if (text == null) {
             text = NULL;
         } else {
-            if (args != null) {
+            if (args != null && args.length > 0) {
                 text = String.format(format, args);
             }
         }
@@ -254,7 +255,7 @@ public final class ToastUtils {
     }
 
     private static void show(final CharSequence text, final int duration) {
-        Utils.runOnUiThread(new Runnable() {
+        UtilsBridge.runOnUiThread(new Runnable() {
             @SuppressLint("ShowToast")
             @Override
             public void run() {
@@ -279,7 +280,7 @@ public final class ToastUtils {
     }
 
     private static void show(final View view, final int duration) {
-        Utils.runOnUiThread(new Runnable() {
+        UtilsBridge.runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 cancel();
@@ -348,14 +349,22 @@ public final class ToastUtils {
 
         static IToast makeToast(Context context, CharSequence text, int duration) {
             if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
-                return new SystemToast(makeNormalToast(context, text, duration));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (!UtilsBridge.isGrantedDrawOverlays()) {
+                        return new SystemToast(makeNormalToast(context, text, duration));
+                    }
+                }
             }
             return new ToastWithoutNotification(makeNormalToast(context, text, duration));
         }
 
         static IToast newToast(Context context) {
             if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
-                return new SystemToast(new Toast(context));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (!UtilsBridge.isGrantedDrawOverlays()) {
+                        return new SystemToast(new Toast(context));
+                    }
+                }
             }
             return new ToastWithoutNotification(new Toast(context));
         }
@@ -426,23 +435,13 @@ public final class ToastUtils {
 
         private WindowManager.LayoutParams mParams = new WindowManager.LayoutParams();
 
-        private static final Utils.OnActivityDestroyedListener LISTENER =
-                new Utils.OnActivityDestroyedListener() {
-                    @Override
-                    public void onActivityDestroyed(Activity activity) {
-                        if (iToast == null) return;
-                        activity.getWindow().getDecorView().setVisibility(View.GONE);
-                        iToast.cancel();
-                    }
-                };
-
         ToastWithoutNotification(Toast toast) {
             super(toast);
         }
 
         @Override
         public void show() {
-            Utils.runOnUiThreadDelayed(new Runnable() {
+            UtilsBridge.runOnUiThreadDelayed(new Runnable() {
                 @Override
                 public void run() {
                     realShow();
@@ -458,22 +457,50 @@ public final class ToastUtils {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) {
                 mWM = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
                 mParams.type = WindowManager.LayoutParams.TYPE_TOAST;
+            } else if (UtilsBridge.isGrantedDrawOverlays()) {
+                mWM = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    mParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+                } else {
+                    mParams.type = WindowManager.LayoutParams.TYPE_PHONE;
+                }
             } else {
-                Context topActivityOrApp = Utils.getTopActivityOrApp();
+                Context topActivityOrApp = UtilsBridge.getTopActivityOrApp();
                 if (!(topActivityOrApp instanceof Activity)) {
-                    Log.e("ToastUtils", "Couldn't get top Activity.");
+                    Log.w("ToastUtils", "Couldn't get top Activity.");
+                    // try to use system toast
+                    new SystemToast(mToast).show();
                     return;
                 }
                 Activity topActivity = (Activity) topActivityOrApp;
                 if (topActivity.isFinishing() || topActivity.isDestroyed()) {
-                    Log.e("ToastUtils", topActivity + " is useless");
+                    Log.w("ToastUtils", topActivity + " is useless");
+                    // try to use system toast
+                    new SystemToast(mToast).show();
                     return;
                 }
                 mWM = topActivity.getWindowManager();
                 mParams.type = WindowManager.LayoutParams.LAST_APPLICATION_WINDOW;
-                Utils.getActivityLifecycle().addOnActivityDestroyedListener(topActivity, LISTENER);
+                UtilsBridge.addActivityLifecycleCallbacks(topActivity, getActivityLifecycleCallbacks());
             }
 
+            setToastParams();
+
+            try {
+                if (mWM != null) {
+                    mWM.addView(mView, mParams);
+                }
+            } catch (Exception ignored) {/**/}
+
+            UtilsBridge.runOnUiThreadDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    cancel();
+                }
+            }, mToast.getDuration() == Toast.LENGTH_SHORT ? 2000 : 3500);
+        }
+
+        private void setToastParams() {
             mParams.height = WindowManager.LayoutParams.WRAP_CONTENT;
             mParams.width = WindowManager.LayoutParams.WRAP_CONTENT;
             mParams.format = PixelFormat.TRANSLUCENT;
@@ -496,19 +523,17 @@ public final class ToastUtils {
             mParams.y = mToast.getYOffset();
             mParams.horizontalMargin = mToast.getHorizontalMargin();
             mParams.verticalMargin = mToast.getVerticalMargin();
+        }
 
-            try {
-                if (mWM != null) {
-                    mWM.addView(mView, mParams);
-                }
-            } catch (Exception ignored) {/**/}
-
-            Utils.runOnUiThreadDelayed(new Runnable() {
+        private Utils.ActivityLifecycleCallbacks getActivityLifecycleCallbacks() {
+            return new Utils.ActivityLifecycleCallbacks() {
                 @Override
-                public void run() {
-                    cancel();
+                public void onActivityDestroyed(@NonNull Activity activity) {
+                    if (iToast == null) return;
+                    activity.getWindow().getDecorView().setVisibility(View.GONE);
+                    iToast.cancel();
                 }
-            }, mToast.getDuration() == Toast.LENGTH_SHORT ? 2000 : 3500);
+            };
         }
 
         @Override

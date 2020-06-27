@@ -34,7 +34,7 @@ public final class BusUtils {
     private final Map<String, List<BusInfo>> mTag_BusInfoListMap = new HashMap<>();
 
     private final Map<String, Set<Object>>         mClassName_BusesMap          = new ConcurrentHashMap<>();
-    private final Map<String, List<String>>        mClassName_TagsMap           = new HashMap<>();
+    private final Map<String, List<String>>        mClassName_TagsMap           = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> mClassName_Tag_Arg4StickyMap = new ConcurrentHashMap<>();
 
     private BusUtils() {
@@ -122,13 +122,13 @@ public final class BusUtils {
             synchronized (mClassName_TagsMap) {
                 tags = mClassName_TagsMap.get(className);
                 if (tags == null) {
-                    tags = new ArrayList<>();
+                    tags = new CopyOnWriteArrayList<>();
                     for (Map.Entry<String, List<BusInfo>> entry : mTag_BusInfoListMap.entrySet()) {
                         for (BusInfo busInfo : entry.getValue()) {
                             try {
                                 if (Class.forName(busInfo.className).isAssignableFrom(aClass)) {
                                     tags.add(entry.getKey());
-                                    busInfo.classNames.add(className);
+                                    busInfo.subClassNames.add(className);
                                 }
                             } catch (ClassNotFoundException e) {
                                 e.printStackTrace();
@@ -147,7 +147,7 @@ public final class BusUtils {
         if (tagArgMap == null) return;
         synchronized (mClassName_Tag_Arg4StickyMap) {
             for (Map.Entry<String, Object> tagArgEntry : tagArgMap.entrySet()) {
-                postInner(tagArgEntry.getKey(), tagArgEntry.getValue());
+                postStickyInner(tagArgEntry.getKey(), tagArgEntry.getValue(), true);
             }
         }
     }
@@ -176,15 +176,19 @@ public final class BusUtils {
             return;
         }
         for (BusInfo busInfo : busInfoList) {
-            if (busInfo.method == null) {
-                Method method = getMethodByBusInfo(busInfo);
-                if (method == null) {
-                    return;
-                }
-                busInfo.method = method;
-            }
-            invokeMethod(tag, arg, busInfo, sticky);
+            invokeBus(tag, arg, busInfo, sticky);
         }
+    }
+
+    private void invokeBus(String tag, Object arg, BusInfo busInfo, boolean sticky) {
+        if (busInfo.method == null) {
+            Method method = getMethodByBusInfo(busInfo);
+            if (method == null) {
+                return;
+            }
+            busInfo.method = method;
+        }
+        invokeMethod(tag, arg, busInfo, sticky);
     }
 
     private Method getMethodByBusInfo(BusInfo busInfo) {
@@ -234,7 +238,7 @@ public final class BusUtils {
         };
         switch (busInfo.threadMode) {
             case "MAIN":
-                Utils.runOnUiThread(runnable);
+                ThreadUtils.runOnUiThread(runnable);
                 return;
             case "IO":
                 ThreadUtils.getIoPool().execute(runnable);
@@ -255,8 +259,8 @@ public final class BusUtils {
 
     private void realInvokeMethod(final String tag, Object arg, BusInfo busInfo, boolean sticky) {
         Set<Object> buses = new HashSet<>();
-        for (String className : busInfo.classNames) {
-            Set<Object> subBuses = mClassName_BusesMap.get(className);
+        for (String subClassName : busInfo.subClassNames) {
+            Set<Object> subBuses = mClassName_BusesMap.get(subClassName);
             if (subBuses != null && !subBuses.isEmpty()) {
                 buses.addAll(subBuses);
             }
@@ -287,6 +291,10 @@ public final class BusUtils {
     }
 
     private void postStickyInner(final String tag, final Object arg) {
+        postStickyInner(tag, arg, false);
+    }
+
+    private void postStickyInner(final String tag, final Object arg, boolean isInvokeOnlySticky) {
         List<BusInfo> busInfoList = mTag_BusInfoListMap.get(tag);
         if (busInfoList == null) {
             Log.e(TAG, "The bus of tag <" + tag + "> is not exists.");
@@ -294,8 +302,10 @@ public final class BusUtils {
         }
         for (BusInfo busInfo : busInfoList) {
             if (!busInfo.sticky) { // not sticky bus will post directly.
-                postInner(tag, arg);
-                return;
+                if (!isInvokeOnlySticky) {
+                    invokeBus(tag, arg, busInfo, false);
+                }
+                continue;
             }
             synchronized (mClassName_Tag_Arg4StickyMap) {
                 Map<String, Object> tagArgMap = mClassName_Tag_Arg4StickyMap.get(busInfo.className);
@@ -305,7 +315,7 @@ public final class BusUtils {
                 }
                 tagArgMap.put(tag, arg);
             }
-            postInner(tag, arg, true);
+            invokeBus(tag, arg, busInfo, true);
         }
     }
 
@@ -331,6 +341,12 @@ public final class BusUtils {
         }
     }
 
+    static void registerBus4Test(String tag,
+                                 String className, String funName, String paramType, String paramName,
+                                 boolean sticky, String threadMode, int priority) {
+        getInstance().registerBus(tag, className, funName, paramType, paramName, sticky, threadMode, priority);
+    }
+
     private static final class BusInfo {
 
         String       className;
@@ -341,7 +357,7 @@ public final class BusUtils {
         String       threadMode;
         int          priority;
         Method       method;
-        List<String> classNames;
+        List<String> subClassNames;
 
         BusInfo(String className, String funName, String paramType, String paramName,
                 boolean sticky, String threadMode, int priority) {
@@ -352,7 +368,7 @@ public final class BusUtils {
             this.sticky = sticky;
             this.threadMode = threadMode;
             this.priority = priority;
-            this.classNames = new CopyOnWriteArrayList<>();
+            this.subClassNames = new CopyOnWriteArrayList<>();
         }
 
         @Override

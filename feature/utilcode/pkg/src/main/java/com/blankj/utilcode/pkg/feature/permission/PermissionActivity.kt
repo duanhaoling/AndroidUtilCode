@@ -5,13 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.blankj.common.activity.CommonActivity
+import com.blankj.common.helper.PermissionHelper
 import com.blankj.common.item.CommonItem
 import com.blankj.common.item.CommonItemClick
 import com.blankj.common.item.CommonItemSwitch
 import com.blankj.common.item.CommonItemTitle
 import com.blankj.utilcode.constant.PermissionConstants
 import com.blankj.utilcode.pkg.R
-import com.blankj.utilcode.pkg.helper.DialogHelper
 import com.blankj.utilcode.util.*
 
 /**
@@ -56,47 +56,47 @@ class PermissionActivity : CommonActivity() {
             add(CommonItemClick(R.string.permission_open_app_settings, true) { PermissionUtils.launchAppDetailsSettings() })
             add(CommonItemSwitch(
                     R.string.permission_calendar_status,
-                    Utils.Func1 {
-                        return@Func1 PermissionUtils.isGranted(Manifest.permission.READ_CALENDAR)
+                    Utils.Supplier {
+                        return@Supplier PermissionUtils.isGranted(Manifest.permission.READ_CALENDAR)
                     },
-                    Utils.Func1 {
+                    Utils.Consumer {
                         requestCalendar()
                     }
             ))
             add(CommonItemSwitch(
                     R.string.permission_record_audio_status,
-                    Utils.Func1 {
-                        return@Func1 PermissionUtils.isGranted(Manifest.permission.RECORD_AUDIO)
+                    Utils.Supplier {
+                        return@Supplier PermissionUtils.isGranted(Manifest.permission.RECORD_AUDIO)
                     },
-                    Utils.Func1 {
+                    Utils.Consumer {
                         requestRecordAudio()
                     }
             ))
             add(CommonItemSwitch(
                     R.string.permission_calendar_and_record_audio_status,
-                    Utils.Func1 {
-                        return@Func1 PermissionUtils.isGranted(Manifest.permission.READ_CALENDAR, Manifest.permission.RECORD_AUDIO)
+                    Utils.Supplier {
+                        return@Supplier PermissionUtils.isGranted(Manifest.permission.READ_CALENDAR, Manifest.permission.RECORD_AUDIO)
                     },
-                    Utils.Func1 {
+                    Utils.Consumer {
                         requestCalendarAndRecordAudio()
                     }
             ))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 add(CommonItemSwitch(
                         R.string.permission_write_settings_status,
-                        Utils.Func1 {
-                            return@Func1 PermissionUtils.isGrantedWriteSettings()
+                        Utils.Supplier {
+                            return@Supplier PermissionUtils.isGrantedWriteSettings()
                         },
-                        Utils.Func1 {
+                        Utils.Consumer {
                             requestWriteSettings()
                         }
                 ))
                 add(CommonItemSwitch(
                         R.string.permission_write_settings_status,
-                        Utils.Func1 {
-                            return@Func1 PermissionUtils.isGrantedDrawOverlays()
+                        Utils.Supplier {
+                            return@Supplier PermissionUtils.isGrantedDrawOverlays()
                         },
-                        Utils.Func1 {
+                        Utils.Consumer {
                             requestDrawOverlays()
                         }
                 ))
@@ -106,7 +106,7 @@ class PermissionActivity : CommonActivity() {
 
     private fun requestCalendar() {
         PermissionUtils.permission(PermissionConstants.CALENDAR)
-                .rationale { shouldRequest -> DialogHelper.showRationaleDialog(shouldRequest) }
+                .rationale { activity, shouldRequest -> PermissionHelper.showRationaleDialog(activity, shouldRequest) }
                 .callback(object : PermissionUtils.FullCallback {
                     override fun onGranted(permissionsGranted: List<String>) {
                         LogUtils.d(permissionsGranted)
@@ -131,7 +131,7 @@ class PermissionActivity : CommonActivity() {
 
     private fun requestRecordAudio() {
         PermissionUtils.permission(PermissionConstants.MICROPHONE)
-                .rationale { shouldRequest -> DialogHelper.showRationaleDialog(shouldRequest) }
+                .rationale { activity, shouldRequest -> PermissionHelper.showRationaleDialog(activity, shouldRequest) }
                 .callback(object : PermissionUtils.FullCallback {
                     override fun onGranted(permissionsGranted: List<String>) {
                         LogUtils.d(permissionsGranted)
@@ -155,7 +155,7 @@ class PermissionActivity : CommonActivity() {
 
     private fun requestCalendarAndRecordAudio() {
         PermissionUtils.permission(PermissionConstants.CALENDAR, PermissionConstants.MICROPHONE)
-                .rationale { shouldRequest -> DialogHelper.showRationaleDialog(shouldRequest) }
+                .rationale { activity, shouldRequest -> PermissionHelper.showRationaleDialog(activity, shouldRequest) }
                 .callback(object : PermissionUtils.FullCallback {
                     override fun onGranted(permissionsGranted: List<String>) {
                         LogUtils.d(permissionsGranted)
